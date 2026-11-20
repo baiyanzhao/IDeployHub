@@ -16,8 +16,8 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: |
-            9.x
             10.x
+            11.x
 
       - name: 编译打包
         shell: pwsh

@@ -1,0 +1,55 @@
+name: Nuget
+run-name: ${{ github.actor }} 正在编译并发布 IDeployHub
+on: [push]
+
+jobs:
+  build-and-publish:
+    runs-on: windows-latest
+    permissions:
+      id-token: write   # Trusted Publishing 必需：允许作业签发 GitHub OIDC 令牌
+      contents: read
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            9.x
+            10.x
+
+      - name: 编译打包
+        shell: pwsh
+        run: |
+          # 仓库名最后一段即项目名（独立仓库为 IDeployHub）
+          $AppName = "${{ github.repository }}".Split("/")[-1]
+          $Path = '${{ github.workspace }}\Version.json'
+          $json_data = Get-Content -Raw -Path $Path | ConvertFrom-Json
+          $ProjectPath = "${{ github.workspace }}\{0}.csproj" -f $AppName
+
+          # 解析版本号
+          $VersionText = $json_data.VersionNow
+          $OutputFolder = "${{ github.workspace }}\nupkg\{0}\" -f $VersionText
+
+          # 准备输出目录
+          if (-not (Test-Path $OutputFolder)) {
+            New-Item -Path $OutputFolder -ItemType Directory | Out-Null
+          }
+
+          # Trusted Publishing 的临时 API Key 不支持符号包，故不生成 snupkg
+          dotnet pack $ProjectPath --output $OutputFolder -p:PackageVersion=$VersionText
+
+          # 把待推送文件路径传递给后续步骤
+          "NUPKG_FILE=$OutputFolder$AppName.*.nupkg" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: NuGet 登录（OIDC 换取临时 API Key）
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: ${{ secrets.NUGET_USER }}   # nuget.org 账户名（个人资料名，非邮箱）
+
+      - name: 发布到 nuget.org
+        shell: pwsh
+        run: |
+          dotnet nuget push $env:NUPKG_FILE --api-key "${{ steps.login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
